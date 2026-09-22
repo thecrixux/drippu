@@ -3,46 +3,114 @@ name: Build Drippu Android
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-android:
+    name: Build Android Release
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # ------------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v5
 
+      # ------------------------------------------------------------
+      # Submodules
+      # Drippu evita algunos submódulos problemáticos/no necesarios
+      # ------------------------------------------------------------
       - name: Initialize submodules
         run: |
-          git -c submodule."externals/ownfoil".update=none \
-              -c submodule."externals/nxdumptool".update=none \
-              -c submodule."externals/nxapi".update=none \
-              -c submodule."externals/nx-optimizer".update=none \
-              submodule update --init --recursive --depth=1
+          git \
+            -c submodule."externals/ownfoil".update=none \
+            -c submodule."externals/nxdumptool".update=none \
+            -c submodule."externals/nxapi".update=none \
+            -c submodule."externals/nx-optimizer".update=none \
+            submodule update --init --recursive --depth=1
 
+      # ------------------------------------------------------------
+      # Workaround usado por el propio proyecto para Dynarmic
+      # ------------------------------------------------------------
+      - name: Fix Dynarmic Boost header
+        run: |
+          f="externals/dynarmic/externals/mcl/include/boost/variant.hpp"
+
+          if [ -f "$f" ] && grep -q 'C:/Users' "$f"; then
+            printf '// Forwarding header\n#include <boost/variant/variant.hpp>\n#include <boost/variant/recursive_variant.hpp>\n#include <boost/variant/recursive_wrapper.hpp>\n#include <boost/variant/get.hpp>\n#include <boost/variant/apply_visitor.hpp>\n#include <boost/variant/static_visitor.hpp>\n#include <boost/variant/visitor_ptr.hpp>\n' > "$f"
+          fi
+
+      # ------------------------------------------------------------
+      # Java 17
+      # ------------------------------------------------------------
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android NDK and CMake
+      # ------------------------------------------------------------
+      # Android SDK / NDK / CMake
+      #
+      # No usamos android-actions/setup-android.
+      # GitHub ya trae Android SDK instalado.
+      # ------------------------------------------------------------
+      - name: Install Android components
         run: |
-          yes | sdkmanager \
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)"
+          fi
+
+          echo "Using sdkmanager: $SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
             "ndk;28.2.13676358" \
             "cmake;3.31.6"
 
-      - name: Build Mainline APK
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------
+      # Build Drippu Mainline RELEASE
+      # ------------------------------------------------------------
+      - name: Build Drippu Mainline Release
         working-directory: src/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleMainlineRelease --stacktrace
 
-      - name: Upload APK
+          ./gradlew \
+            assembleMainlineRelease \
+            --stacktrace \
+            --no-daemon \
+            --max-workers=2
+
+      # ------------------------------------------------------------
+      # Mostrar APK generado
+      # ------------------------------------------------------------
+      - name: Show generated APK
+        run: |
+          echo "Generated APK:"
+          find src/android/app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -print
+
+      # ------------------------------------------------------------
+      # Subir APK como Artifact
+      # ------------------------------------------------------------
+      - name: Upload Drippu APK
         uses: actions/upload-artifact@v4
         with:
-          name: drippu-mainline-android
-          path: |
-            src/android/app/build/outputs/apk/mainline/release/*.apk
+          name: Drippu-Mainline-Release
+          path: src/android/app/build/outputs/apk/mainline/release/app-mainline-release.apk
+          if-no-files-found: error
+          retention-days: 7
