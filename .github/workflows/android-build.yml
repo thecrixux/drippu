@@ -1,0 +1,48 @@
+name: Build Drippu Android
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize submodules
+        run: |
+          git -c submodule."externals/ownfoil".update=none \
+              -c submodule."externals/nxdumptool".update=none \
+              -c submodule."externals/nxapi".update=none \
+              -c submodule."externals/nx-optimizer".update=none \
+              submodule update --init --recursive --depth=1
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK and CMake
+        run: |
+          yes | sdkmanager \
+            "ndk;28.2.13676358" \
+            "cmake;3.31.6"
+
+      - name: Build Mainline APK
+        working-directory: src/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleMainlineRelease --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: drippu-mainline-android
+          path: |
+            src/android/app/build/outputs/apk/mainline/release/*.apk
