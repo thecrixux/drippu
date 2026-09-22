@@ -12,16 +12,9 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      # ------------------------------------------------------------
-      # Checkout
-      # ------------------------------------------------------------
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
-      # ------------------------------------------------------------
-      # Submodules
-      # Drippu evita algunos submódulos problemáticos/no necesarios
-      # ------------------------------------------------------------
       - name: Initialize submodules
         run: |
           git \
@@ -31,10 +24,7 @@ jobs:
             -c submodule."externals/nx-optimizer".update=none \
             submodule update --init --recursive --depth=1
 
-      # ------------------------------------------------------------
-      # Workaround usado por el propio proyecto para Dynarmic
-      # ------------------------------------------------------------
-      - name: Fix Dynarmic Boost header
+      - name: Fix submodule headers
         run: |
           f="externals/dynarmic/externals/mcl/include/boost/variant.hpp"
 
@@ -42,75 +32,35 @@ jobs:
             printf '// Forwarding header\n#include <boost/variant/variant.hpp>\n#include <boost/variant/recursive_variant.hpp>\n#include <boost/variant/recursive_wrapper.hpp>\n#include <boost/variant/get.hpp>\n#include <boost/variant/apply_visitor.hpp>\n#include <boost/variant/static_visitor.hpp>\n#include <boost/variant/visitor_ptr.hpp>\n' > "$f"
           fi
 
-      # ------------------------------------------------------------
-      # Java 17
-      # ------------------------------------------------------------
       - name: Set up Java 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
-          distribution: temurin
+          distribution: microsoft
           java-version: '17'
-          cache: gradle
 
-      # ------------------------------------------------------------
-      # Android SDK / NDK / CMake
-      #
-      # No usamos android-actions/setup-android.
-      # GitHub ya trae Android SDK instalado.
-      # ------------------------------------------------------------
-      - name: Install Android components
+      - name: Install native dependencies
         run: |
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          sudo apt-get update
+          sudo apt-get install -y ninja-build glslang-tools
 
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)"
-          fi
-
-          echo "Using sdkmanager: $SDKMANAGER"
-
-          yes | "$SDKMANAGER" --licenses > /dev/null || true
-
-          "$SDKMANAGER" \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "ndk;28.2.13676358" \
-            "cmake;3.31.6"
-
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
-
-      # ------------------------------------------------------------
-      # Build Drippu Mainline RELEASE
-      # ------------------------------------------------------------
       - name: Build Drippu Mainline Release
         working-directory: src/android
         run: |
           chmod +x gradlew
+          ./gradlew assembleMainlineRelease --stacktrace
 
-          ./gradlew \
-            assembleMainlineRelease \
-            --stacktrace \
-            --no-daemon \
-            --max-workers=2
-
-      # ------------------------------------------------------------
-      # Mostrar APK generado
-      # ------------------------------------------------------------
-      - name: Show generated APK
+      - name: Collect APK
         run: |
-          echo "Generated APK:"
-          find src/android/app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            -print
+          mkdir -p _pkg
+          find src/android -name 'app-mainline-release.apk' -exec cp {} _pkg/ \;
 
-      # ------------------------------------------------------------
-      # Subir APK como Artifact
-      # ------------------------------------------------------------
+          echo "Generated files:"
+          ls -lah _pkg
+
       - name: Upload Drippu APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Drippu-Mainline-Release
-          path: src/android/app/build/outputs/apk/mainline/release/app-mainline-release.apk
+          path: _pkg/app-mainline-release.apk
           if-no-files-found: error
           retention-days: 7
